@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGZO Ergebnisse 🏆</title>
+    <!-- D3.js library from a CDN -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            scroll-behavior: smooth;
+        }
+        .athlete-header {
+            background-color: #f3f4f6; /* gray-100 */
+            font-weight: 600;
+        }
+        .result-row:hover {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 p-4 sm:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">RGZO Ergebnisse</h1>
+            <p class="text-md text-gray-600 mt-2">Rennergebnisse nach Anlass und Athlet gruppiert. Zum Erweitern oder Reduzieren auf die Rennüberschriften klicken.</p>
+        </header>
+
+        <!-- Filter input box -->
+        <div class="mb-8 max-w-md mx-auto">
+            <input type="text" id="filter-input" placeholder="Nach Athlet, Rennen, Medaillen usw. filtern..." class="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <!-- This empty div is where D3 will render the data table -->
+        <div class="bg-white rounded-lg shadow-md overflow-x-auto">
+            <table id="results-table" class="w-full text-sm text-left text-gray-500">
+                <!-- D3 will populate the thead and tbody here -->
+            </table>
+        </div>
+    </div>
+
+    <p id="last-updated" class="text-sm text-gray-500 mt-8 text-center">Letzte Aktualisierung: ...</p>
+    
+    <script>
+        const csvUrl = './data/ski-data.csv';
+
+        d3.csv(csvUrl, d => {
+            const rankAsNumber = parseInt(d.Rank, 10);
+            d.Rank = isNaN(rankAsNumber) ? d.Rank : rankAsNumber;
+            return d;
+        }).then(function(originalData) {
+            const table = d3.select('#results-table');
+            const filterInput = d3.select('#filter-input');
+            
+            const eventDataColumns = originalData.columns.filter(d => !['RaceName', 'Name', 'Date', 'Location', 'ResultUrl'].includes(d));
+
+            const normalizeText = (str) => {
+                if (!str) return '';
+                return str.toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            };
+
+            filterInput.on('input', function() {
+                const filterValue = normalizeText(this.value);
+                if (filterValue) {
+                    const filteredData = originalData.filter(row => {
+                        const columnsToFilter = ['Name', 'Category', 'RaceName', 'Event', 'Rank', 'Date', 'Location'];
+                        const substringMatch = columnsToFilter.some(column => 
+                            normalizeText(row[column]).includes(filterValue)
+                        );
+                        let specialMatch = false;
+                        if ((filterValue === 'medaille' || filterValue === 'medaillen') && (row.Rank >= 1 && row.Rank <= 3)) {
+                            specialMatch = true;
+                        } else if (filterValue === 'gold' && row.Rank === 1) {
+                            specialMatch = true;
+                        } else if (filterValue === 'silber' && row.Rank === 2) {
+                            specialMatch = true;
+                        } else if (filterValue === 'bronze' && row.Rank === 3) {
+                            specialMatch = true;
+                        }
+                        return substringMatch || specialMatch;
+                    });
+                    renderTable(filteredData, true);
+                } else {
+                    renderTable(originalData, false);
+                }
+            });
+
+            function renderTable(data, isFiltering) {
+                table.html('');
+
+                function getStartOfWeekUTC(dateStr) {
+                    const d = new Date(dateStr);
+                    const day = d.getUTCDay();
+                    const diff = d.getUTCDate() - day;
+                    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
+                }
+
+                const latestDateStr = d3.max(data, d => d.Date);
+                let startOfMostRecentWeek = null;
+                if (latestDateStr) {
+                    startOfMostRecentWeek = getStartOfWeekUTC(latestDateStr + 'T00:00:00Z');
+                }
+
+                const thead = table.append('thead').attr('class', 'text-xs text-gray-700 uppercase bg-gray-50');
+                const headerRow = thead.append('tr');
+                headerRow.append('th').attr('class', 'px-6 py-3');
+                headerRow.selectAll('th.data-header')
+                    .data(eventDataColumns)
+                    .join('th')
+                    .attr('class', 'data-header px-6 py-3')
+                    .attr('scope', 'col')
+                    .text(d => d);
+
+                const groupedByRace = d3.group(data, d => d.RaceName);
+                const raceEntries = Array.from(groupedByRace.entries());
+
+                raceEntries.sort(([, resultsA], [, resultsB]) => {
+                    const maxDateA = d3.max(resultsA, d => d.Date);
+                    const maxDateB = d3.max(resultsB, d => d.Date);
+                    return new Date(maxDateB) - new Date(maxDateA);
+                });
+
+                raceEntries.forEach(([raceName, results]) => {
+                    const tbody = table.append('tbody');
+                    let isInitiallyCollapsed = true;
+                    if (isFiltering) {
+                        isInitiallyCollapsed = false;
+                    } else if (startOfMostRecentWeek) {
+                        const raceMaxDateStr = d3.max(results, d => d.Date);
+                        const raceStartOfWeek = getStartOfWeekUTC(raceMaxDateStr + 'T00:00:00Z');
+                        if (raceStartOfWeek.getTime() === startOfMostRecentWeek.getTime()) {
+                            isInitiallyCollapsed = false;
+                        }
+                    }
+                    if (isInitiallyCollapsed) {
+                        tbody.classed('collapsed', true);
+                    }
+                    
+                    const ranks = results.map(r => r.Rank).filter(r => typeof r === 'number').sort((a, b) => a - b);
+                    const summary = ranks.map(rank => {
+                        if (rank === 1) return '🥇';
+                        if (rank === 2) return '🥈';
+                        if (rank === 3) return '🥉';
+                        return rank;
+                    }).join(' ');
+
+                    const uniqueDates = [...new Set(results.map(r => r.Date))].sort();
+                    const location = results.length > 0 ? results[0].Location : '';
+                    let dateString = '';
+
+                    if (uniqueDates.length > 0) {
+                        const firstDate = new Date(uniqueDates[0] + 'T00:00:00Z');
+                        const month = firstDate.toLocaleString('de-CH', { month: 'short', timeZone: 'UTC' });
+                        const year = firstDate.getUTCFullYear();
+                        const firstDay = firstDate.getUTCDate();
+                        
+                        if (uniqueDates.length > 1) {
+                            const lastDate = new Date(uniqueDates[uniqueDates.length - 1] + 'T00:00:00Z');
+                            const lastDay = lastDate.getUTCDate();
+                            dateString = `${firstDay}-${lastDay} ${month} ${year}`;
+                        } else {
+                            dateString = `${firstDay} ${month} ${year}`;
+                        }
+                    }
+                    
+                    const locationAndDateString = [location, dateString].filter(Boolean).join(', ');
+
+                    const raceHeader = tbody.append('tr')
+                        .attr('class', 'group-header bg-sky-50 border-t border-gray-200 cursor-pointer hover:bg-sky-100')
+                        .on('click', function() {
+                            const isCollapsed = tbody.classed('collapsed');
+                            tbody.classed('collapsed', !isCollapsed);
+                            tbody.selectAll('tr:not(.group-header)')
+                                .style('display', isCollapsed ? 'table-row' : 'none');
+                            d3.select(this).select('.indicator').text(isCollapsed ? '▸' : '▾');
+                        });
+
+                    const raceHeaderCell = raceHeader.append('td')
+                        .attr('colspan', eventDataColumns.length + 1)
+                        .attr('class', 'px-6 py-3');
+
+                    const headerContent = `
+                    <div class="flex items-start gap-3 w-full">
+                        <span class="indicator text-gray-400 w-4 text-center font-semibold text-lg pt-1 sm:pt-0">${isInitiallyCollapsed ? '▸' : '▾'}</span>
+                        
+                        <div class="flex flex-col sm:flex-row sm:justify-between w-full sm:items-center">
+                            <!-- Left side: Contains Race Name. For desktop, also contains Results -->
+                            <div class="flex flex-col">
+                                <span class="race-name text-lg font-bold text-gray-900">${raceName}</span>
+                                <!-- Results (Desktop Only) -->
+                                <div class="pt-1 hidden sm:block">
+                                    <span class="race-results text-sm text-gray-600">
+                                        <span class="font-medium text-gray-500">Resultate: </span>${summary}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <!-- Mobile Layout Section: Appears below Name, hidden on desktop -->
+                            <div class="sm:hidden">
+                                <span class="text-sm text-gray-500">${locationAndDateString}</span>
+                                <div class="pt-1">
+                                    <span class="race-results text-sm text-gray-600">
+                                        <span class="font-medium text-gray-500">Resultate: </span>${summary}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Right side: Location and Date (Desktop Only) -->
+                            <div class="hidden sm:block sm:text-right">
+                                <span class="text-sm text-gray-500 sm:font-medium sm:whitespace-nowrap sm:ml-4">${locationAndDateString}</span>
+                            </div>
+                        </div>
+                    </div>`;
+                    raceHeaderCell.html(headerContent);
+
+                    const groupedByAthlete = d3.group(results, d => d.Name);
+                    const sortedAthletes = Array.from(groupedByAthlete.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+                    sortedAthletes.forEach(([athleteName, athleteEvents]) => {
+                        athleteEvents.sort((a, b) => a.Event.localeCompare(b.Event));
+
+                        tbody.append('tr')
+                            .attr('class', 'athlete-header')
+                            .append('td')
+                            .attr('colspan', eventDataColumns.length + 1)
+                            .attr('class', 'px-6 py-2 font-medium text-gray-800 border-t')
+                            .style('padding-left', '2rem')
+                            .text(athleteName);
+
+                        athleteEvents.forEach(event => {
+                            const row = tbody.append('tr')
+                                .attr('class', 'result-row bg-white hover:bg-gray-50')
+                                .on('click', () => {
+                                    if (event.ResultUrl) {
+                                        window.open(event.ResultUrl, '_blank');
+                                    }
+                                });
+
+                            row.append('td').attr('class', 'border-t');
+                            eventDataColumns.forEach(column => {
+                                const cell = row.append('td')
+                                    .attr('class', 'px-6 py-4 border-t');
+                                
+                                if (column === 'Rank') {
+                                    let rankText = event[column];
+                                    if (event[column] === 1) rankText = '🥇 ' + rankText;
+                                    else if (event[column] === 2) rankText = '🥈 ' + rankText;
+                                    else if (event[column] === 3) rankText = '🥉 ' + rankText;
+                                    cell.text(rankText);
+                                } else {
+                                    cell.text(event[column]);
+                                }
+                            });
+                        });
+                    });
+
+                    if (isInitiallyCollapsed) {
+                        tbody.selectAll('tr:not(.group-header)').style('display', 'none');
+                    }
+                });
+            }
+
+            renderTable(originalData, false);
+        });
+
+        (function() {
+            const repoOwner = 'balint-miklos';
+            const repoName = 'ski-results';
+            const filePath = 'ski-data.csv';
+            const timeZone = 'Europe/Zurich';
+
+            fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits?path=${filePath}&per_page=1`)
+                .then(response => response.json())
+                .then(commits => {
+                    if (commits && commits.length > 0) {
+                        const commitDate = new Date(commits[0].commit.author.date);
+                        const options = { weekday: 'long', year: 'numeric', month: 'short', day: '2-digit', timeZone: timeZone };
+                        const timeString = commitDate.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit', timeZone: timeZone });
+                        const dateString = commitDate.toLocaleDateString('de-CH', options);
+                        document.getElementById('last-updated').textContent = `Letzte Aktualisierung: ${timeString} am ${dateString}`;
+                    } else {
+                        document.getElementById('last-updated').textContent = "Letzte Aktualisierung: (unbekannt)";
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('last-updated').textContent = "Letzte Aktualisierung: (konnte nicht abgerufen werden) ";
+                });
+        })();
+    </script>
+
+</body>
+</html>
