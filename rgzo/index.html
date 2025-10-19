@@ -47,7 +47,7 @@
     <p id="last-updated" class="text-sm text-gray-500 mt-8 text-center">Letzte Aktualisierung: ...</p>
     
     <script>
-        const csvUrl = './data/ski-data.csv';
+        const csvUrl = './data.csv';
 
         d3.csv(csvUrl, d => {
             const rankAsNumber = parseInt(d.Rank, 10);
@@ -269,9 +269,9 @@
         });
 
         (function() {
-            const repoOwner = 'balint-miklos';
-            const repoName = 'ski-results';
-            const filePath = 'ski-data.csv';
+            const repoOwner = 'forge29';
+            const repoName = 'ski.forge29.ch';
+            const filePath = 'rgzo/ski-data.csv';
             const timeZone = 'Europe/Zurich';
 
             fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits?path=${filePath}&per_page=1`)
